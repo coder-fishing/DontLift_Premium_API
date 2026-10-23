@@ -64,16 +64,21 @@ export function createOrderStore(db, clock = Date.now) {
       });
     },
     async refreshStatus(code, payos) {
-      const shouldCheck = await db.runTransaction(async tx => {
+      const order = await db.runTransaction(async tx => {
         const snapshot = await tx.get(ref(code));
         const row = snapshot.data();
-        if (!row || row.status !== 'PENDING' || clock() - (row.checkedAtMs ?? 0) < 10000) return false;
+        if (!row || row.status !== 'PENDING' || clock() - (row.checkedAtMs ?? 0) < 10000) return null;
         tx.update(snapshot.ref, { checkedAtMs: clock() });
-        return true;
+        return row;
       });
-      if (!shouldCheck) return;
+      if (!order) return;
       const link = await payos.get(code);
-      if (['CANCELLED', 'EXPIRED'].includes(link.status)) {
+      if (link.orderCode !== code || link.id !== order.paymentLinkId || link.amount !== order.amountVnd
+        || link.currency !== 'VND') return;
+      if (link.status === 'PAID' && link.amountPaid === order.amountVnd) {
+        // Nút làm mới cũng xác minh trạng thái với payOS để phục hồi nếu webhook bị lỡ.
+        await this.grant(code, link.id);
+      } else if (['CANCELLED', 'EXPIRED'].includes(link.status)) {
         await db.runTransaction(async tx => {
           const snapshot = await tx.get(ref(code));
           const row = snapshot.data();
