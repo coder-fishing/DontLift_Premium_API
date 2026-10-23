@@ -39,8 +39,17 @@ export function createOrderStore(db, clock = Date.now) {
         }
         const [current, collision] = await Promise.all([tx.get(currentRef), tx.get(ref(code))]);
         if (collision.exists) throw new ApiError('unavailable', 503);
-        // Giới hạn tạo mới được lưu trong Firestore, không mất khi host restart.
-        if (current.exists && now - current.data().createdAtMs < 10000) throw new ApiError('rate-limited', 429);
+        let previousStatus = null;
+        if (current.exists) {
+          const activeOrder = await tx.get(ref(current.data().orderCode));
+          previousStatus = activeOrder.exists ? activeOrder.data().status : null;
+          if (activeOrder.exists && !['PAID', 'CANCELLED', 'EXPIRED'].includes(previousStatus)) {
+            throw new ApiError('failed-precondition', 409);
+          }
+        }
+        // Cho phép tạo ngay đơn thay thế sau khi PayOS đã xác nhận hủy/hết hạn.
+        if (current.exists && !['CANCELLED', 'EXPIRED'].includes(previousStatus)
+          && now - current.data().createdAtMs < 10000) throw new ApiError('rate-limited', 429);
         const order = { uid, requestId, orderCode: code, packageId: pack.id, amountVnd: pack.amountVnd,
           grantedMonths: pack.grantedMonths, paidMonths: pack.paidMonths, status: 'CREATING',
           lease, leaseUntil: now + 20000, createdAt: FieldValue.serverTimestamp() };
@@ -63,18 +72,19 @@ export function createOrderStore(db, clock = Date.now) {
         return { ...row, ...patch };
       });
     },
-    async refreshStatus(code, payos) {
+    async refreshStatus(code, payos, force = false) {
       const order = await db.runTransaction(async tx => {
         const snapshot = await tx.get(ref(code));
         const row = snapshot.data();
-        if (!row || row.status !== 'PENDING' || clock() - (row.checkedAtMs ?? 0) < 10000) return null;
+        if (!row || row.status !== 'PENDING' || (!force && clock() - (row.checkedAtMs ?? 0) < 10000)) return null;
         tx.update(snapshot.ref, { checkedAtMs: clock() });
         return row;
       });
       if (!order) return;
       const link = await payos.get(code);
+      // GET payment link của payOS không cam kết trả currency; link đã được xác thực VND lúc tạo.
       if (link.orderCode !== code || link.id !== order.paymentLinkId || link.amount !== order.amountVnd
-        || link.currency !== 'VND') return;
+        || (link.currency != null && link.currency !== 'VND')) return;
       if (link.status === 'PAID' && link.amountPaid === order.amountVnd) {
         // Nút làm mới cũng xác minh trạng thái với payOS để phục hồi nếu webhook bị lỡ.
         await this.grant(code, link.id);
@@ -87,6 +97,22 @@ export function createOrderStore(db, clock = Date.now) {
           }
         });
       }
+    },
+    async markProviderTerminal(code, paymentLinkId, status) {
+      return db.runTransaction(async tx => {
+        const snapshot = await tx.get(ref(code));
+        const row = snapshot.data();
+        if (!row) throw new ApiError('not-found', 404);
+        // Webhook PAID luôn thắng, không để thao tác hủy ghi đè thanh toán đã xác nhận.
+        if (row.status === 'PAID') return row;
+        if (row.paymentLinkId !== paymentLinkId) throw new ApiError('payment-mismatch', 409);
+        if (row.status === 'CANCELLED' || row.status === 'EXPIRED') return row;
+        if (row.status !== 'PENDING' || !['CANCELLED', 'EXPIRED'].includes(status)) {
+          throw new ApiError('failed-precondition', 409);
+        }
+        tx.update(snapshot.ref, { status, updatedAt: FieldValue.serverTimestamp() });
+        return { ...row, status };
+      });
     },
     async releaseLease(code, lease) {
       await db.runTransaction(async tx => {

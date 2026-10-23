@@ -9,6 +9,7 @@ export function createPremiumOrderRouter({ verifyToken, orders }) {
 
   router.post('/', controller.create);
   router.get('/current', controller.current);
+  router.post('/current/cancel', controller.cancelCurrent);
   router.get('/:code', controller.get);
   return router;
 }

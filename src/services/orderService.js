@@ -52,6 +52,53 @@ export function createOrderService(store, payos, baseUrl) {
       throw error instanceof ApiError ? error : new ApiError('unavailable', 503);
     }
   }
+  async function cancelCurrent(uid, body) {
+    if (!body || typeof body !== 'object' || Array.isArray(body) || body.version !== 1
+      || Object.keys(body).some(key => key !== 'version')) throw new ApiError('invalid-argument');
+    const order = await store.current(uid);
+    if (!order || order.uid !== uid) return null;
+    if (['PAID', 'CANCELLED', 'EXPIRED'].includes(order.status)) return publicOrder(order);
+    if (order.status !== 'PENDING' || !order.paymentLinkId) throw new ApiError('failed-precondition', 409);
+
+    function validateLink(link) {
+      if (!link || link.orderCode !== order.orderCode || link.id !== order.paymentLinkId
+        || link.amount !== order.amountVnd || (link.currency != null && link.currency !== 'VND')) {
+        throw new ApiError('payment-mismatch', 409);
+      }
+    }
+    async function applyTerminal(link) {
+      validateLink(link);
+      if (link.status === 'PAID') {
+        if (link.amountPaid !== order.amountVnd) throw new ApiError('payment-mismatch', 409);
+        return publicOrder(await store.grant(order.orderCode, link.id));
+      }
+      if (['CANCELLED', 'EXPIRED'].includes(link.status)) {
+        return publicOrder(await store.markProviderTerminal(order.orderCode, link.id, link.status));
+      }
+      return null;
+    }
+
+    // Kiểm tra trước khi hủy để không hủy nhầm một giao dịch vừa thanh toán.
+    const currentLink = await payos.get(order.orderCode);
+    const alreadyTerminal = await applyTerminal(currentLink);
+    if (alreadyTerminal) return alreadyTerminal;
+    if (currentLink.status !== 'PENDING') throw new ApiError('failed-precondition', 409);
+
+    try {
+      const cancelledLink = await payos.cancel(order.orderCode, 'User selected a different Premium package');
+      const terminal = await applyTerminal(cancelledLink);
+      if (terminal) return terminal;
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      // Nếu response hủy bị mất, đọc trạng thái thật trước khi cho chọn gói khác.
+    }
+
+    const confirmedLink = await payos.get(order.orderCode);
+    const confirmed = await applyTerminal(confirmedLink);
+    if (confirmed) return confirmed;
+    throw new ApiError('unavailable', 503);
+  }
+
   async function resumeIfLeaseExpired(uid, order) {
     if (order?.status === 'CREATING' && !(order.leaseUntil > Date.now())) {
       // Dùng lại request idempotent để nhận lease hết hạn và tìm link cũ trên payOS trước.
@@ -61,6 +108,7 @@ export function createOrderService(store, payos, baseUrl) {
   }
   return {
     create,
+    cancelCurrent,
     async get(uid, code) {
       if (!/^\d{1,15}$/.test(String(code))) throw new ApiError('invalid-argument');
       const order = await store.get(Number(code));
@@ -68,10 +116,11 @@ export function createOrderService(store, payos, baseUrl) {
       await store.refreshStatus(order.orderCode, payos).catch(() => undefined);
       return resumeIfLeaseExpired(uid, await store.get(order.orderCode));
     },
-    async current(uid) {
+    async current(uid, forceRefresh = false) {
       const order = await store.current(uid);
       if (!order || order.uid !== uid) return null;
-      await store.refreshStatus(order.orderCode, payos).catch(() => undefined);
+      if (forceRefresh) await store.refreshStatus(order.orderCode, payos, true);
+      else await store.refreshStatus(order.orderCode, payos).catch(() => undefined);
       return resumeIfLeaseExpired(uid, await store.get(order.orderCode));
     },
   };
