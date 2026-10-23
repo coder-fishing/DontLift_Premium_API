@@ -109,11 +109,12 @@ export function createOrderService(store, payos, baseUrl) {
   return {
     create,
     cancelCurrent,
-    async get(uid, code) {
+    async get(uid, code, forceRefresh = false) {
       if (!/^\d{1,15}$/.test(String(code))) throw new ApiError('invalid-argument');
       const order = await store.get(Number(code));
       if (!order || order.uid !== uid) throw new ApiError('not-found', 404);
-      await store.refreshStatus(order.orderCode, payos).catch(() => undefined);
+      if (forceRefresh) await store.refreshStatus(order.orderCode, payos, true);
+      else await store.refreshStatus(order.orderCode, payos).catch(() => undefined);
       return resumeIfLeaseExpired(uid, await store.get(order.orderCode));
     },
     async current(uid, forceRefresh = false) {
