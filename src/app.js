@@ -21,7 +21,7 @@ export function createApp({ verifyToken, orders, webhook, avatars, webOrigin = '
     if (req.headers.origin && req.headers.origin === webOrigin) {
       res.set('Access-Control-Allow-Origin', webOrigin).set('Vary', 'Origin');
       res.set('Access-Control-Allow-Headers', 'Authorization, Content-Type');
-      res.set('Access-Control-Allow-Methods', 'GET, POST');
+      res.set('Access-Control-Allow-Methods', 'GET, POST, DELETE');
     }
     if (req.method === 'OPTIONS') return res.sendStatus(204);
     next();

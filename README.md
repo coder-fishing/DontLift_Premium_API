@@ -27,7 +27,7 @@ Trong `dontlift-mobile/.env.local`, đặt `EXPO_PUBLIC_PREMIUM_API_URL` bằng 
 
 ## Upload ảnh đại diện
 
-`POST /v1/profile/avatar` yêu cầu `Authorization: Bearer <Firebase ID token>` và body là byte ảnh thô (không phải JSON hoặc multipart). Hỗ trợ `image/jpeg`, `image/png`, `image/webp`, tối đa 5 MB. Ví dụ:
+`POST /v1/profile/avatar` yêu cầu `Authorization: Bearer <Firebase ID token>` và body là byte ảnh thô (không phải JSON hoặc multipart). Hỗ trợ `image/jpeg`, `image/png`, `image/webp`, tối đa 5 MB. API kiểm tra chữ ký file ảnh, upload vào ID duy nhất theo UID, rồi lưu `avatarUri` và `avatarPublicId` vào `users/{uid}` bằng Firebase Admin. Response có dạng `{ "version": 1, "url": "...", "publicId": "...", "cleanupPending": false }`.
 
 ```sh
 curl -X POST "$PREMIUM_API_URL/v1/profile/avatar" \
@@ -36,7 +36,9 @@ curl -X POST "$PREMIUM_API_URL/v1/profile/avatar" \
   --data-binary @avatar.jpg
 ```
 
-API kiểm tra chữ ký file ảnh, upload ảnh lên Cloudinary với public ID riêng theo Firebase UID để thay ảnh cũ, rồi trả `{ "version": 1, "url": "...", "publicId": "..." }`. Dontlift lưu trường `url` vào hồ sơ người dùng. API không ghi URL vào Firestore. Nếu thiếu cấu hình Cloudinary endpoint trả `avatar-upload-unavailable`.
+Khi thay ảnh, API tạo public ID mới (`avatars/{uid}/{assetId}`), cập nhật hồ sơ, rồi đưa public ID cũ vào hàng đợi dọn dẹp server-only. Nếu cập nhật hồ sơ lỗi, ảnh đang dùng vẫn giữ nguyên và ảnh mới được đưa vào hàng đợi dọn dẹp. API thử dọn các asset đang chờ ở mỗi thao tác avatar sau đó.
+
+`DELETE /v1/profile/avatar` chỉ cần Firebase Bearer token; API lấy asset hiện tại từ hồ sơ, xóa tham chiếu avatar khỏi hồ sơ và đưa public ID vào hàng đợi dọn dẹp. Cả POST và DELETE trả `cleanupPending: true` nếu hồ sơ đã cập nhật nhưng Cloudinary chưa xác nhận xóa toàn bộ asset cũ. Response DELETE: `{ "version": 1, "removed": true, "cleanupPending": false }`. URL Cloudinary là public; người có URL có thể xem ảnh. Nếu thiếu cấu hình Cloudinary, upload trả `avatar-upload-unavailable`; yêu cầu gỡ vẫn ẩn ảnh khỏi hồ sơ và trả trạng thái dọn dẹp đang chờ.
 
 ## Nối payOS
 
