@@ -1,7 +1,7 @@
 export const packages = Object.freeze([
-  { id: 'MONTH_1', amountVnd: 89000, paidMonths: 1, grantedMonths: 1 },
-  { id: 'MONTH_3', amountVnd: 178000, paidMonths: 2, grantedMonths: 3 },
-  { id: 'MONTH_6', amountVnd: 356000, paidMonths: 4, grantedMonths: 6 },
-  { id: 'MONTH_12', amountVnd: 623000, paidMonths: 7, grantedMonths: 12 },
+  { id: 'MONTH_1', amountVnd: 30000, paidMonths: 1, grantedMonths: 1 },
+  { id: 'MONTH_3', amountVnd: 79000, paidMonths: 3, grantedMonths: 4 },
+  { id: 'MONTH_6', amountVnd: 149000, paidMonths: 6, grantedMonths: 8 },
+  { id: 'MONTH_12', amountVnd: 249000, paidMonths: 12, grantedMonths: 16 },
 ]);
 export const packageById = id => packages.find(item => item.id === id);
