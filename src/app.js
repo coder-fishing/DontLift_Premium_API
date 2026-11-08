@@ -7,8 +7,9 @@ import { createPackageRouter } from './routes/packages.js';
 import { createCheckoutRouter } from './routes/checkout.js';
 import { createWebhookRouter } from './routes/webhooks.js';
 import { createPremiumOrderRouter } from './routes/premium-orders.js';
+import { createProfileRouter } from './routes/profile.js';
 
-export function createApp({ verifyToken, orders, webhook, webOrigin = '' }) {
+export function createApp({ verifyToken, orders, webhook, avatars, webOrigin = '' }) {
   const app = express();
   app.disable('x-powered-by');
   app.use((req, res, next) => {
@@ -33,6 +34,7 @@ export function createApp({ verifyToken, orders, webhook, webOrigin = '' }) {
   app.use('/checkout', createCheckoutRouter());
   app.use('/webhooks', createWebhookRouter(webhook));
   app.use('/v1/premium/orders', createPremiumOrderRouter({ verifyToken, orders }));
+  app.use('/v1/profile', createProfileRouter({ verifyToken, avatars }));
 
   app.use(notFoundHandler);
   app.use(errorHandler);

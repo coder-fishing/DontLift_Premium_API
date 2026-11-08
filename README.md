@@ -19,10 +19,24 @@ Các biến backend:
 | PAYOS_CLIENT_ID / PAYOS_API_KEY / PAYOS_CHECKSUM_KEY | Ba credentials của một payOS payment channel |
 | PORT | Host cấp hoặc mặc định 3000 |
 | WEB_ORIGIN | Optional allowlisted web origin; native app không cần |
+| CLOUDINARY_CLOUD_NAME / CLOUDINARY_API_KEY / CLOUDINARY_API_SECRET | Bộ credentials Cloudinary backend; cần đặt đủ cả ba để bật upload ảnh đại diện |
 
 Có thể dùng Application Default Credentials thay JSON khi host hỗ trợ. Local nên đặt `FIREBASE_SERVICE_ACCOUNT_PATH` trỏ tới file JSON tải từ Firebase để tránh lỗi escape trong `.env`. Service account cần quyền Firestore read/write và quyền xác minh user/token revocation Firebase Auth; cấp quyền tối thiểu theo IAM của project. Không dùng Owner key và không đưa credential vào `EXPO_PUBLIC_*`.
 
 Trong `dontlift-mobile/.env.local`, đặt `EXPO_PUBLIC_PREMIUM_API_URL` bằng origin Express rồi restart Expo. Expo Go cần URL điện thoại truy cập được. Expo `--tunnel` chỉ expose Metro, không expose Express.
+
+## Upload ảnh đại diện
+
+`POST /v1/profile/avatar` yêu cầu `Authorization: Bearer <Firebase ID token>` và body là byte ảnh thô (không phải JSON hoặc multipart). Hỗ trợ `image/jpeg`, `image/png`, `image/webp`, tối đa 5 MB. Ví dụ:
+
+```sh
+curl -X POST "$PREMIUM_API_URL/v1/profile/avatar" \
+  -H "Authorization: Bearer $FIREBASE_ID_TOKEN" \
+  -H "Content-Type: image/jpeg" \
+  --data-binary @avatar.jpg
+```
+
+API kiểm tra chữ ký file ảnh, upload ảnh lên Cloudinary với public ID riêng theo Firebase UID để thay ảnh cũ, rồi trả `{ "version": 1, "url": "...", "publicId": "..." }`. Dontlift lưu trường `url` vào hồ sơ người dùng. API không ghi URL vào Firestore. Nếu thiếu cấu hình Cloudinary endpoint trả `avatar-upload-unavailable`.
 
 ## Nối payOS
 
