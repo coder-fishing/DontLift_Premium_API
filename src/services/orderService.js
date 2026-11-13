@@ -3,26 +3,54 @@ import { packageById } from '../domain/premiumPackages.js';
 import { publicOrder } from '../repositories/orderRepository.js';
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const validBankTransfer = link => (typeof link?.bin === 'string' || typeof link?.bin === 'number') && /^\d{6}$/.test(String(link.bin))
-  && (typeof link.accountNumber === 'string' || typeof link.accountNumber === 'number')
-  && /^[A-Za-z0-9]{1,19}$/.test(String(link.accountNumber))
-  && typeof link.accountName === 'string' && link.accountName.trim().length > 0
-  && typeof link.description === 'string' && /^[\x20-\x7E]{1,50}$/.test(link.description);
 const premiumTransferMemo = orderCode => `DL${String(orderCode).slice(-7).padStart(7, '0')}`;
-const bankTransferFromPayOS = (link, order) => validBankTransfer(link)
-  && link.orderCode === order.orderCode && link.amount === order.amountVnd && link.description === premiumTransferMemo(order.orderCode) ? {
-  bankBin: String(link.bin), accountNumber: String(link.accountNumber), accountName: link.accountName.trim(), memo: link.description,
-} : null;
+function qrFields(payload) {
+  const fields = new Map();
+  if (typeof payload !== 'string' || payload.length > 2048) return fields;
+  for (let offset = 0; offset < payload.length;) {
+    const header = payload.slice(offset, offset + 4);
+    if (!/^\d{4}$/.test(header)) return new Map();
+    const id = header.slice(0, 2);
+    const start = offset + 4;
+    const end = start + Number(header.slice(2));
+    if (end > payload.length || fields.has(id)) return new Map();
+    fields.set(id, payload.slice(start, end));
+    offset = end;
+  }
+  return fields;
+}
+
+function bankTransferFromPayOS(link, order) {
+  if (link.orderCode !== order.orderCode || link.amount !== order.amountVnd) return null;
+  const memo = premiumTransferMemo(order.orderCode);
+  const bankBin = String(link.bin ?? link.bankBin ?? '');
+  const accountNumber = String(link.accountNumber ?? link.virtualAccountNumber ?? '');
+  const accountName = link.accountName ?? link.virtualAccountName;
+  if (/^\d{6}$/.test(bankBin) && /^[A-Za-z0-9]{1,19}$/.test(accountNumber)
+    && typeof accountName === 'string' && accountName.trim()) {
+    return { bankBin, accountNumber, accountName: accountName.trim(), memo };
+  }
+
+  const fields = qrFields(link.qrCode || order.qrCode);
+  const merchant = qrFields(fields.get('38'));
+  const recipient = qrFields(merchant.get('01'));
+  if (merchant.get('00') !== 'A000000727' || merchant.get('02') !== 'QRIBFTTA'
+    || fields.get('53') !== '704' || Number(fields.get('54')) !== order.amountVnd
+    || qrFields(fields.get('62')).get('08') !== memo) return null;
+
+  // This payOS account's checkout shows the holder name, which its QR omits.
+  if (recipient.get('00') !== '970422' || recipient.get('01') !== 'VQRQANOLY5220') return null;
+  return { bankBin: recipient.get('00'), accountNumber: recipient.get('01'), accountName: 'PHAM NHU QUOC TRIEU', memo };
+}
 
 export function createOrderService(store, payos, baseUrl) {
   async function attachQr(order) {
-    const bankTransferLookupRecent = order?.bankTransferCheckedAtMs && Date.now() - order.bankTransferCheckedAtMs < 60_000;
     if (!order || order.status !== 'PENDING' || !order.paymentLinkId
-      || (order.qrCode && (order.bankTransfer || bankTransferLookupRecent))) return publicOrder(order);
+      || (order.qrCode && order.bankTransfer)) return publicOrder(order);
     try {
       const link = await payos.get(order.orderCode);
       const qrCode = typeof link.qrCode === 'string' && link.qrCode ? link.qrCode : order.qrCode;
-      if (link.id !== order.paymentLinkId || link.amount !== order.amountVnd || !qrCode) return publicOrder(order);
+      if (link.orderCode !== order.orderCode || link.id !== order.paymentLinkId || link.amount !== order.amountVnd || !qrCode) return publicOrder(order);
       const updated = await store.saveLink(order.orderCode, {
         checkoutUrl: `https://pay.payos.vn/web/${encodeURIComponent(link.id)}`,
         qrCode,
