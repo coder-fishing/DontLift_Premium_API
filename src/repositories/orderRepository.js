@@ -6,6 +6,7 @@ import { extendPremium } from '../domain/premiumCalendar.js';
 export function publicOrder(row) {
   return { version: 1, requestId: row.requestId, orderCode: row.orderCode, packageId: row.packageId, amountVnd: row.amountVnd,
     status: row.status, checkoutUrl: row.checkoutUrl ?? null, qrCode: row.qrCode ?? null,
+    bankTransfer: row.bankTransfer ?? null,
     premiumExpiresAtUtcMs: row.grantedExpiresAt?.toMillis() ?? null };
 }
 export function createOrderStore(db, clock = Date.now) {
@@ -66,7 +67,8 @@ export function createOrderStore(db, clock = Date.now) {
         if (!row) throw new ApiError('not-found', 404);
         // Webhook có thể đã commit PAID trước response tạo link; không ghi đè nó.
         if (row.status === 'PAID') return row;
-        const patch = { checkoutUrl: link.checkoutUrl, qrCode: link.qrCode, paymentLinkId: link.paymentLinkId,
+        const patch = { checkoutUrl: link.checkoutUrl, qrCode: link.qrCode, bankTransfer: link.bankTransfer ?? row.bankTransfer ?? null,
+          bankTransferCheckedAtMs: link.bankTransfer ? clock() : row.bankTransferCheckedAtMs ?? clock(), paymentLinkId: link.paymentLinkId,
           status: ['CANCELLED', 'EXPIRED'].includes(link.status) ? link.status : 'PENDING', updatedAt: FieldValue.serverTimestamp() };
         tx.update(snapshot.ref, patch);
         return { ...row, ...patch };

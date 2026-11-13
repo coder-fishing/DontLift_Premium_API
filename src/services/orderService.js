@@ -3,15 +3,30 @@ import { packageById } from '../domain/premiumPackages.js';
 import { publicOrder } from '../repositories/orderRepository.js';
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const validBankTransfer = link => (typeof link?.bin === 'string' || typeof link?.bin === 'number') && /^\d{6}$/.test(String(link.bin))
+  && (typeof link.accountNumber === 'string' || typeof link.accountNumber === 'number')
+  && /^[A-Za-z0-9]{1,19}$/.test(String(link.accountNumber))
+  && typeof link.accountName === 'string' && link.accountName.trim().length > 0
+  && typeof link.description === 'string' && /^[\x20-\x7E]{1,50}$/.test(link.description);
+const premiumTransferMemo = orderCode => `DL${String(orderCode).slice(-7).padStart(7, '0')}`;
+const bankTransferFromPayOS = (link, order) => validBankTransfer(link)
+  && link.orderCode === order.orderCode && link.amount === order.amountVnd && link.description === premiumTransferMemo(order.orderCode) ? {
+  bankBin: String(link.bin), accountNumber: String(link.accountNumber), accountName: link.accountName.trim(), memo: link.description,
+} : null;
+
 export function createOrderService(store, payos, baseUrl) {
   async function attachQr(order) {
-    if (!order || order.status !== 'PENDING' || order.qrCode || !order.paymentLinkId) return publicOrder(order);
+    const bankTransferLookupRecent = order?.bankTransferCheckedAtMs && Date.now() - order.bankTransferCheckedAtMs < 60_000;
+    if (!order || order.status !== 'PENDING' || !order.paymentLinkId
+      || (order.qrCode && (order.bankTransfer || bankTransferLookupRecent))) return publicOrder(order);
     try {
       const link = await payos.get(order.orderCode);
-      if (link.id !== order.paymentLinkId || link.amount !== order.amountVnd || typeof link.qrCode !== 'string' || !link.qrCode) return publicOrder(order);
+      const qrCode = typeof link.qrCode === 'string' && link.qrCode ? link.qrCode : order.qrCode;
+      if (link.id !== order.paymentLinkId || link.amount !== order.amountVnd || !qrCode) return publicOrder(order);
       const updated = await store.saveLink(order.orderCode, {
         checkoutUrl: `https://pay.payos.vn/web/${encodeURIComponent(link.id)}`,
-        qrCode: link.qrCode,
+        qrCode,
+        bankTransfer: bankTransferFromPayOS(link, order),
         paymentLinkId: link.id,
         status: link.status,
       });
@@ -36,17 +51,18 @@ export function createOrderService(store, payos, baseUrl) {
         if (saved.orderCode !== order.orderCode || saved.amount !== order.amountVnd || typeof saved.id !== 'string'
           || typeof saved.qrCode !== 'string' || !saved.qrCode) throw new ApiError('unavailable', 503);
         const link = { checkoutUrl: `https://pay.payos.vn/web/${encodeURIComponent(saved.id)}`, qrCode: saved.qrCode,
+          bankTransfer: bankTransferFromPayOS(saved, order),
           paymentLinkId: saved.id, status: saved.status };
         return publicOrder(await store.saveLink(order.orderCode, link));
       }
       const link = await payos.create({ orderCode: order.orderCode, amount: order.amountVnd,
-        description: `DL${String(order.orderCode).slice(-7).padStart(7, '0')}`,
+        description: premiumTransferMemo(order.orderCode),
         items: [{ name: `DontLift Premium ${order.grantedMonths} months`, quantity: 1, price: order.amountVnd }],
         returnUrl: `${baseUrl}/checkout/return`, cancelUrl: `${baseUrl}/checkout/cancel` });
       if (link.orderCode !== order.orderCode || link.amount !== order.amountVnd || link.currency !== 'VND'
         || typeof link.paymentLinkId !== 'string' || typeof link.qrCode !== 'string' || !link.qrCode
         || !/^https:\/\/pay\.payos\.vn\//.test(link.checkoutUrl)) throw new ApiError('unavailable', 503);
-      return publicOrder(await store.saveLink(order.orderCode, link));
+      return publicOrder(await store.saveLink(order.orderCode, { ...link, bankTransfer: bankTransferFromPayOS(link, order) }));
     } catch (error) {
       await store.releaseLease(order.orderCode, order.lease).catch(() => undefined);
       throw error instanceof ApiError ? error : new ApiError('unavailable', 503);
