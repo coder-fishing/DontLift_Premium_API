@@ -8,6 +8,7 @@ export function errorHandler(error, _req, res, _next) {
         : error instanceof SyntaxError ? 400 : 503;
   const code = error instanceof ApiError
     ? error.code
+    : error.type === 'entity.too.large' ? 'image-too-large'
     : status === 400 ? 'invalid-argument' : 'unavailable';
   res.status(status).json({ version: 1, code });
 }

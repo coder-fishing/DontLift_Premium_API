@@ -13,10 +13,23 @@ export function readConfig(env) {
     throw new Error('Cloudinary settings must be provided together');
   }
   if (cloudinaryValues[0] && !/^[A-Za-z0-9_-]+$/.test(cloudinaryValues[0])) throw new Error('Invalid CLOUDINARY_CLOUD_NAME');
+  const paddleOcrUrl = env.PADDLEOCR_SCAN_URL?.trim() || '';
+  const paddleOcrApiKey = env.PADDLEOCR_API_KEY?.trim() || '';
+  if (Boolean(paddleOcrUrl) !== Boolean(paddleOcrApiKey)) {
+    throw new Error('PADDLEOCR_SCAN_URL and PADDLEOCR_API_KEY must be configured together');
+  }
+  if (paddleOcrUrl) {
+    const scanUrl = new URL(paddleOcrUrl);
+    if (scanUrl.protocol !== 'https:' || scanUrl.username || scanUrl.password || scanUrl.search
+      || scanUrl.hash || scanUrl.pathname !== '/scan') {
+      throw new Error('PADDLEOCR_SCAN_URL must be an HTTPS /scan endpoint');
+    }
+  }
   return { publicBaseUrl: url.origin, port, projectId: env.FIREBASE_PROJECT_ID,
     webOrigin: env.WEB_ORIGIN || '', clientId: env.PAYOS_CLIENT_ID, apiKey: env.PAYOS_API_KEY,
     checksumKey: env.PAYOS_CHECKSUM_KEY,
     serviceAccount: env.FIREBASE_SERVICE_ACCOUNT_JSON,
     serviceAccountPath: env.FIREBASE_SERVICE_ACCOUNT_PATH,
-    cloudinary: cloudinaryValues[0] ? { cloudName: cloudinaryValues[0], apiKey: cloudinaryValues[1], apiSecret: cloudinaryValues[2] } : null };
+    cloudinary: cloudinaryValues[0] ? { cloudName: cloudinaryValues[0], apiKey: cloudinaryValues[1], apiSecret: cloudinaryValues[2] } : null,
+    paddleOcrUrl: paddleOcrUrl || null, paddleOcrApiKey: paddleOcrApiKey || null, paddleOcrTimeoutMs: 60_000 };
 }
