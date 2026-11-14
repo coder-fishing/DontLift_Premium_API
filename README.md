@@ -40,6 +40,21 @@ Khi thay ảnh, API tạo public ID mới (`avatars/{uid}/{assetId}`), cập nh�
 
 `DELETE /v1/profile/avatar` chỉ cần Firebase Bearer token; API lấy asset hiện tại từ hồ sơ, xóa tham chiếu avatar khỏi hồ sơ và đưa public ID vào hàng đợi dọn dẹp. Cả POST và DELETE trả `cleanupPending: true` nếu hồ sơ đã cập nhật nhưng Cloudinary chưa xác nhận xóa toàn bộ asset cũ. Response DELETE: `{ "version": 1, "removed": true, "cleanupPending": false }`. URL Cloudinary là public; người có URL có thể xem ảnh. Nếu thiếu cấu hình Cloudinary, upload trả `avatar-upload-unavailable`; yêu cầu gỡ vẫn ẩn ảnh khỏi hồ sơ và trả trạng thái dọn dẹp đang chờ.
 
+## Quét hóa đơn qua PaddleOCR
+
+`POST /v1/bills/scan?roomId=<roomId>` nhận byte ảnh thô với `Authorization: Bearer <Firebase ID token>` và `Content-Type: image/jpeg`, `image/png`, hoặc `image/webp`. Giới hạn request là 10 MiB. Trước khi gọi OCR, Express xác minh Firebase token, `users/{uid}.premiumExpiresAt` còn hiệu lực theo giờ máy chủ, caller là Host hiện tại với membership `HOST`/`ACTIVE`, và room ở trạng thái `COMPLETED`/`FINALIZED`.
+
+Khi được phép, backend gửi ảnh dưới dạng multipart field `image` đến PaddleOCR HTTPS endpoint kết thúc bằng `/scan`, kèm header `X-API-Key`. Cấu hình tùy chọn để bật tính năng:
+
+| Biến | Giá trị |
+|---|---|
+| `PADDLEOCR_SCAN_URL` | HTTPS URL của endpoint PaddleOCR `/scan` |
+| `PADDLEOCR_API_KEY` | Khóa xác thực PaddleOCR, chỉ lưu trong secret store của Express host |
+
+Phải cấu hình cả hai biến. Nếu thiếu cả hai, API Premium tiếp tục hoạt động và scan trả lỗi `ocr-unavailable`; cấu hình một phần hoặc URL không phải HTTPS `/scan` khiến backend từ chối khởi động. Timeout provider là 60 giây; backend không tự retry. Không ghi log hoặc lưu ảnh/JSON OCR vào Firestore, SQLite hay response lỗi.
+
+Response version 1 chuyển tiếp `status`, nullable `amount`/`suggested_amount`, `currency: "VND"`, `needs_confirmation: true`, `evidence`, `warnings`, và `timings_ms`. Các số tiền chỉ là gợi ý; app yêu cầu Host xác nhận trước khi điền bill total, sau đó vẫn dùng preview và Publish flow hiện có. Errors được chuẩn hóa thành `unauthenticated` (401), `premium-required`/`host-required` (403), `invalid-image` (415), `image-too-large` (413), `invalid-argument` (400), `failed-precondition` (409), `ocr-unavailable` (503), `ocr-timeout` (504), hoặc `ocr-invalid-response` (502). Không để lộ API key hoặc nội dung provider.
+
 ## Nối payOS
 
 1. Tạo/xác minh tài khoản cá nhân hoặc doanh nghiệp và payment channel trên my.payos.vn.
